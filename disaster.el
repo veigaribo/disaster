@@ -4,12 +4,13 @@
 
 ;; Author: Justine Tunney <jtunney@gmail.com>
 ;;         Abdelhak Bougouffa <abougouffa@fedoraproject.org>
-;; Maintainer: Abdelhak Bougouffa <abougouffa@fedoraproject.org>
+;;         Gabriel Veiga <gabriellopvei@gmail.com>
+;; Maintainer: Gabriel Veiga <gabriellopvei@gmail.com>
 ;; Created: 2013-03-02
 ;; Version: 1.0
 ;; Package-Requires: ((emacs "27"))
 ;; Keywords: tools c
-;; URL: https://github.com/jart/disaster
+;; URL: https://github.com/veigaribo/disaster
 
 ;; This file is not part of GNU Emacs.
 
@@ -38,8 +39,7 @@
 ;; C, C++ or Fortran file you're currently editing. It even jumps to and
 ;; highlights the line of assembly corresponding to the line beneath your cursor.
 ;;
-;; It works by creating a `.o` file using `make` (if you have a Makefile), or
-;; `cmake` (if you have a `compile_commands.json` file) or the default system
+;; It works by creating a `.o` file using the default system
 ;; compiler. It then runs that file through `objdump` to generate the
 ;; human-readable assembly.
 
@@ -168,11 +168,7 @@
 
 (defun disaster-create-compile-command (file)
   "Create compile command for a Make-based project.
-MAKE-ROOT: path to build root,
-CWD: path to current source file,
-REL-OBJ: path to object file (relative to project root),
-OBJ-FILE: full path to object file (build root!)
-PROJ-ROOT: path to project root, REL-FILE FILE."
+FILE: path to the file to compile."
   (cond ((string-match-p disaster-cpp-regexp file)
          (format "%s %s -g -c -o %s %s"
                  disaster-cxx disaster-cxxflags
