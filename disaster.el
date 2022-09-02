@@ -89,11 +89,6 @@
   :prefix "disaster-"
   :group 'tools)
 
-(defcustom disaster-make-flags "-k"
-  "Command line options to pass to make if a Makefile is found."
-  :group 'disaster
-  :type 'string)
-
 (defcustom disaster-assembly-mode 'asm-mode
   "Which mode to use to view assembly code."
   :group 'disaster
@@ -151,17 +146,6 @@
   :group 'disaster
   :type 'string)
 
-(defcustom disaster-project-root-files
-  (list (list ".projectile")    ;; Projectile project root.
-        (list "setup.py"        ;; Python apps.
-              "package.json")   ;; node.js apps.
-        (list "CMakeLists.txt") ;; CMake files are sometimes in subdirectories.
-        (list "Makefile"))      ;; Makefiles are sometimes in subdirectories.
-  "List of lists of files that may indicate software project root directory.
-Sublist are ordered from highest to lowest precedence."
-  :group 'disaster
-  :type '(repeat (repeat string)))
-
 (defcustom disaster-c-regexp "\\.c$"
   "Regexp for C source files."
   :group 'disaster
@@ -177,79 +161,31 @@ Sublist are ordered from highest to lowest precedence."
   :group 'disaster
   :type 'regexp)
 
-;;;###autoload
-(defvar disaster-find-build-root-functions nil
-  "Functions to call to get the build root directory from the project directory.
-If nil is returned, the next function will be tried.  If all
-functions return nil, the project root directory will be used as
-the build directory.")
+(defcustom disaster-obj-path (concat "/tmp/emacs-disaster-" (user-login-name) "/output.o")
+  "Path to write the object file to."
+  :group 'disaster
+  :type 'string)
 
-(defun disaster-create-compile-command-make (make-root cwd rel-obj obj-file proj-root rel-file file)
+(defun disaster-create-compile-command (file)
   "Create compile command for a Make-based project.
 MAKE-ROOT: path to build root,
 CWD: path to current source file,
 REL-OBJ: path to object file (relative to project root),
 OBJ-FILE: full path to object file (build root!)
 PROJ-ROOT: path to project root, REL-FILE FILE."
-  (if make-root
-      ;; if-then
-      (cond ((equal cwd make-root)
-             (format "make %s %s" disaster-make-flags (shell-quote-argument rel-obj)))
-            (t (format "make %s -C %s %s"
-                       disaster-make-flags make-root rel-obj)))
-    ;; if-else
-    (cond ((string-match-p disaster-cpp-regexp file)
-           (format "%s %s -g -c -o %s %s"
-                   disaster-cxx disaster-cxxflags
-                   (shell-quote-argument obj-file) (shell-quote-argument file)))
-          ((string-match-p disaster-c-regexp file)
-           (format "%s %s -g -c -o %s %s"
-                   disaster-cc disaster-cflags
-                   (shell-quote-argument obj-file) (shell-quote-argument file)))
-          ((string-match-p disaster-fortran-regexp file)
-           (format "%s %s -g -c -o %s %s"
-                   disaster-fortran disaster-fortranflags
-                   (shell-quote-argument obj-file) (shell-quote-argument file)))
-          (t (warn "File %s do not seems to be a C, C++ or Fortran file." file)))))
-
-(defun disaster-create-compile-command-cmake (make-root cwd rel-obj obj-file proj-root rel-file)
-  "Create compile command for a CMake-based project.
-MAKE-ROOT: path to build root,
-CWD: path to current source file,
-REL-OBJ: path to object file (relative to project root),
-OBJ-FILE: full path to object file (build root!)
-PROJ-ROOT: path to project root, REL-FILE FILE."
-  (let* ((json-object-type 'hash-table)
-         (json-array-type 'list)
-         (json-key-type 'string)
-         (json (json-read-file (concat make-root "/compile_commands.json"))))
-    (catch 'compile-command
-      (dolist (obj json)
-        (when (string-equal (gethash "file" obj) (concat proj-root rel-file))
-          (throw 'compile-command (gethash "command" obj)))))))
-
-(defun disaster-get-object-file-path-cmake (compile-cmd)
-  "Get the .o object file name from a full COMPILE-CMD."
-  (let* ((parts (split-string compile-cmd " "))
-         (break-on-next nil))
-    (catch 'object-file
-      (dolist (part parts)
-        (if (string-equal "-o" part)
-            (setq break-on-next t)
-          (when break-on-next
-            (throw 'object-file part)))))))
-
-(defun disaster-create-compile-command (use-cmake make-root cwd rel-obj obj-file proj-root rel-file file)
-  "Create the actual compile command.
-USE-CMAKE: non NIL to use CMake, NIL to use Make or default compiler options,
-MAKE-ROOT: path to build root,
-CWD: path to current source file,
-REL-OBJ: path to object file (relative to project root),
-OBJ-FILE: full path to object file (build root!)
-PROJ-ROOT: path to project root, REL-FILE FILE."
-  (if use-cmake
-      (disaster-create-compile-command-cmake make-root cwd rel-obj obj-file proj-root rel-file)
-    (disaster-create-compile-command-make make-root cwd rel-obj obj-file proj-root rel-file file)))
+  (cond ((string-match-p disaster-cpp-regexp file)
+         (format "%s %s -g -c -o %s %s"
+                 disaster-cxx disaster-cxxflags
+                 (shell-quote-argument disaster-obj-path) (shell-quote-argument file)))
+        ((string-match-p disaster-c-regexp file)
+         (format "%s %s -g -c -o %s %s"
+                 disaster-cc disaster-cflags
+                 (shell-quote-argument disaster-obj-path) (shell-quote-argument file)))
+        ((string-match-p disaster-fortran-regexp file)
+         (format "%s %s -g -c -o %s %s"
+                 disaster-fortran disaster-fortranflags
+                 (shell-quote-argument disaster-obj-path) (shell-quote-argument file)))
+        (t (warn "File %s do not seems to be a C, C++ or Fortran file." file))))
 
 ;;;###autoload
 (defun disaster (&optional file line)
@@ -257,12 +193,9 @@ PROJ-ROOT: path to project root, REL-FILE FILE."
 
 Here's the logic path it follows:
 
-- Is there a complile_commands.json in this directory? Get the object file
-  name for the current file, and run it associated command.
-- Is there a Makefile in this directory? Run `make bufname.o`.
-- Or is there a Makefile in a parent directory? Run `make -C .. bufname.o`.
 - Or is this a C file? Run `cc -g -c -o bufname.o bufname.c`
 - Or is this a C++ file? Run `c++ -g -c -o bufname.o bufname.c`
+- Or is this a Fortran file? Run `gfortran -g -c -o bufname.o bufname.c`
 - If build failed, display errors in compile-mode.
 - Run objdump inside a new window while maintaining focus.
 - Jump to line matching current line.
@@ -279,34 +212,21 @@ is used."
     (if (or (string-match-p disaster-c-regexp file)
             (string-match-p disaster-cpp-regexp file)
             (string-match-p disaster-fortran-regexp file))
-        (let* ((cwd       (file-name-directory (expand-file-name (buffer-file-name)))) ;; path to current source file
-               (proj-root (disaster-find-project-root nil file)) ;; path to project root
-               (use-cmake (file-exists-p (concat proj-root "/compile_commands.json")))
-               (make-root (disaster-find-build-root use-cmake proj-root)) ;; path to build root
-               (rel-file  (if proj-root ;; path to source file (relative to project root)
-                              (file-relative-name file proj-root)
-                            file))
-               (rel-obj   (concat (file-name-sans-extension rel-file) ".o")) ;; path to object file (relative to project root)
-               (obj-file  (concat make-root rel-obj)) ;; full path to object file (build root!)
-               (cc        (disaster-create-compile-command use-cmake make-root cwd rel-obj obj-file proj-root rel-file file))
+        (let* ((cc        (disaster-create-compile-command file))
                (dump      (format "%s %s" disaster-objdump
-                                  (shell-quote-argument (concat make-root rel-obj))))
+                                  (shell-quote-argument disaster-obj-path)))
                (line-text (buffer-substring-no-properties
                            (point-at-bol)
                            (point-at-eol))))
 
-          ;; For CMake, read the object file from compile_commands.json
-          (when use-cmake
-            (let ((tmp (disaster-get-object-file-path-cmake cc)))
-              (setq obj-file (format "%s/%s" make-root tmp)
-                    cc       (format "cmake --build %s --target %s" make-root tmp)
-                    dump     (format "%s %s" disaster-objdump
-                                     (shell-quote-argument obj-file)))))
+          (make-directory (file-name-directory disaster-obj-path) t)
+          ;; delete potential old file so we can check for creation later
+          (delete-file disaster-obj-path nil)
 
           (if (and (eq 0 (progn
                            (message (format "Running: %s" cc))
                            (shell-command cc makebuf)))
-                   (file-exists-p obj-file))
+                   (file-exists-p disaster-obj-path))
               (when (eq 0 (progn
                             (message (format "Running: %s" dump))
                             (shell-command dump asmbuf)))
@@ -353,98 +273,18 @@ assembly code."
                          'face 'shadow)))
       (forward-line))))
 
-(defun disaster--find-parent-dirs (&optional file)
-  "Return a list of parent directories with trailing slashes.
+(defun disaster-find-project-root ()
+  "Detect bottom directory of project.
 
-For example:
-
-    (disaster--find-parent-dirs \"/home/jart/disaster-disaster.el\")
-    => (\"/home/jart/\" \"/home/\" \"/\")
-
-FILE default to `w/function buffer-file-name'."
-  (let ((res nil)
-        (dir (file-name-directory
-              (expand-file-name (or file (buffer-file-name))))))
-    (while dir
-      (setq res (cons dir res)
-            dir (if (string-match "/[^/]+/$" dir)
-                    (substring dir 0 (+ 1 (match-beginning 0))))))
-    (reverse res)))
-
-(defun disaster--dir-has-file (dir file)
-  "Return t if DIR contain FILE (or any file if FILE is a list).
-
-For example:
-
-    (disaster--dir-has-file \"/home/jart/\" \".bashrc\")
-    (disaster--dir-has-file \"/home/jart/\" (list \".bashrc\" \".screenrc\"))"
-  (let ((res nil)
-        (dir (file-name-as-directory dir))
-        (files (if (listp file)
-                   file
-                 (list file))))
-    (while (and files (not res))
-      (setq res (file-exists-p (concat dir (car files)))
-            files (cdr files)))
-    res))
-
-(defun disaster-find-project-root (&optional looks file)
-  "General-purpose Heuristic to detect bottom directory of project.
-
-First, this will try to use `(vc-root-dir)' to guess the project
-root directory, and falls back to manual check wich works by scanning
-parent directories of FILE (using `disaster--find-parent-dirs') for certain
-types of files like a `.projectile` file or a `Makefile` (which is less
-preferred).
-
-The canonical structure of LOOKS is a list of lists of files
-to look for in each parent directory where sublists are ordered
-from highest precedence to lowest.  However you may specify
-LOOKS as a single string or a list of strings for your
-convenience. If LOOKS is not specified, it'll default to
+This will try to use `(vc-root-dir)' to guess the project
+root directory.
 `disaster-project-root-files'."
-  (let* ((buffer (get-file-buffer (or file (buffer-file-name))))
+  (let* ((buffer (get-file-buffer (buffer-file-name)))
          (res (when buffer
                 (with-current-buffer buffer
                   (when (vc-root-dir)
-                    (expand-file-name (vc-root-dir))))))
-         (looks (if looks
-                    (if (listp looks)
-                        (if (listp (car looks))
-                            looks
-                          (list looks))
-                      (list (list looks)))
-                  disaster-project-root-files))
-         (parent-dirs (disaster--find-parent-dirs file)))
-    (while (and looks (null res))
-      (let ((parents parent-dirs))
-        (while (and parents (null res))
-          (setq res (when (disaster--dir-has-file (car parents) (car looks))
-                      (car parents))
-                parents (cdr parents))))
-      (setq looks (cdr looks)))
+                    (expand-file-name (vc-root-dir)))))))
     res))
-
-(defun disaster-find-build-root (use-cmake project-root)
-  "Find the root of build directory.
-USE-CMAKE: non nil to use CMake's compile_commands.json,
-PROJECT-ROOT: root directory of the project."
-  (if use-cmake
-      (progn
-        (let* ((json-object-type 'hash-table)
-               (json-array-type 'list)
-               (json-key-type 'string)
-               (json (json-read-file (concat project-root "/compile_commands.json"))))
-          (gethash "directory" (car json))))
-    (and project-root
-         (or (let (build-root
-                   (funcs disaster-find-build-root-functions))
-               (while (and (null build-root) funcs)
-                 (setq build-root (funcall (car funcs) project-root)
-                       funcs (cdr funcs)))
-               (and build-root
-                    (file-name-as-directory build-root)))
-             project-root))))
 
 (provide 'disaster)
 
